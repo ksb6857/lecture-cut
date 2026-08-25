@@ -1,0 +1,22 @@
+# 원본·렌더 결과물은 깃에 넣지 않는다
+*.mp4
+*.mov
+*.wav
+*.vrew
+
+# 언제든 다시 뽑는 중간 산출물
+work/
+*.partial.jsonl
+
+# 모델 (첫 실행 때 자동 다운로드, 수 GB)
+models/
+
+# 드래프트 백업·스냅샷 (이 PC 전용)
+_backup/
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+Thumbs.db
