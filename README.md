@@ -42,10 +42,10 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`,
 Claude Code 가 이 폴더를 스킬로 읽게 한다. 개인용으로 쓰려면
 `~/.claude/skills/lecture-cut` 로 링크한다.
 
-윈도우(관리자 PowerShell):
+윈도우 — 정션(junction)은 관리자 권한이 필요 없다. 학교 컴퓨터에서도 된다.
 
 ```powershell
-New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\lecture-cut" -Target "C:\projects\lecture-cut"
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\lecture-cut" -Target "C:\projects\lecture-cut"
 ```
 
 맥·리눅스:
@@ -54,8 +54,8 @@ New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\lecture-c
 ln -s "$PWD" ~/.claude/skills/lecture-cut
 ```
 
-링크를 못 만들면 폴더째 복사해도 된다. 대신 `git pull` 로 갱신이 안 되니
-`~/.claude/skills/lecture-cut` 에서 직접 clone 하는 편이 낫다.
+링크가 안 되면 아예 `~/.claude/skills/lecture-cut` 에서 clone 해도 된다.
+폴더째 복사하면 `git pull` 로 갱신이 안 된다.
 
 특정 프로젝트에서만 쓸 거면 `<프로젝트>/.claude/skills/lecture-cut` 에 링크한다.
 
