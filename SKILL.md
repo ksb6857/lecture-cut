@@ -64,9 +64,11 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 체크리스트를 그대로 복사해 진행하면서 채운다.
 
 ```
+[ ] 0 파트 병합   merge_parts         → 원본이 한 벌이면 건너뛴다
 [ ] 1 발화 검출   analyze_audio       → <이름>_speech.json
 [ ] 2 전사        transcribe          → <이름>_words.json
 [ ] 3 재발화      transcribe_per_segment + find_hidden/repeat_retakes
+[ ]   슬레이트    find_slates         → 파트별 촬영일 때만
 [ ] 4 내용 판단   청크 분석(LLM)      → <이름>_results/result_NN.json
 [ ] 5 병합        merge_analysis      → <이름>_analysis.json, _retakes.json
 [ ] 6 컷 계획     cut_planner         → <이름>_keep_ranges.json
@@ -77,6 +79,31 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 
 `<이름>` 은 강의 하나를 가리키는 짧은 영문 이름을 쓴다(`ep03` 처럼). 한글
 파일명은 torch 가 모델을 못 읽는 문제를 부르니 피한다.
+
+## 0. 파트를 나눠 찍었으면 먼저 잇는다
+
+원본이 한 벌이면 이 단계를 건너뛴다. 파트마다 끊어 찍어 여러 벌이면 뒤 단계가
+전부 원본 하나를 전제하므로 여기서 한 벌로 만든다.
+
+```bash
+python <SKILL>/src/merge_parts.py <촬영원본폴더> "C:\video\<이름>.mp4" --json <작업>/work/<이름>_parts.json
+```
+
+파일 이름이 `차시_파트번호_파트명_테이크[_OK]` 형식이면 파트마다 쓸 테이크를
+고른다. `_OK` 가 붙은 것이 최우선이고, 없으면 테이크 번호가 큰 것을 쓴다.
+**촬영 순서가 아니라 파트번호 순서로** 잇는다. 규격이 전부 같으면 무재인코딩이라
+90분 분량도 몇 초에 끝난다.
+
+테이크마다 앞에 육성 슬레이트("성명, 몇 차시, 테이크 1")를 넣어 찍었으면,
+전사(2단계)를 마친 뒤 찾아서 지운다.
+
+```bash
+python <SKILL>/src/find_slates.py <작업>/work/<이름>_words.json <작업>/work/<이름>_parts.json <작업>/work/<이름>_slates.json
+```
+
+결과를 6단계 `cut_planner` 에 `<이름>_retakes.json` 과 함께 넘기면 된다.
+**슬레이트를 못 찾은 파트는 지우지 않고 알려만 준다.** 슬레이트를 빼먹고 찍은
+파트에서 앞부분을 통째로 지우면 강의 첫 문장이 사라진다.
 
 ## 단계별 명령
 
@@ -150,6 +177,11 @@ python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech.json <작업>/wo
 ```bash
 python <SKILL>/src/build_capcut_draft.py <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_analysis.json "<원본.mp4>" <드래프트이름> <작업>/work/<이름>_speech.json
 ```
+
+**나레이션 전체 자막을 금지하는 납품 규격이면 `--no-captions` 를 붙인다.**
+SRT 파일은 그대로 만들되 드래프트에는 자막을 깔지 않는다. 깔아 두면 편집자가
+일일이 지워야 하고 한둘 남으면 검수에 걸린다. SRT 는 검수와 자막 문구 작성에
+계속 쓰인다.
 
 끝에서 `verify_draft_audio.py` 가 자동으로 돈다. 소리가 안 나는 드래프트면
 거기서 빌드가 멈춘다. `draft_content.json` 만 읽으면 무음 드래프트도 멀쩡해

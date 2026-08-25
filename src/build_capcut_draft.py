@@ -19,6 +19,7 @@ import pycapcut as cc
 from pycapcut import trange, tim
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cliargs import split_args  # noqa: E402
 from caption_split import split_words  # noqa: E402
 from draft_root import find_draft_root  # noqa: E402,F401
 
@@ -191,7 +192,13 @@ def build_subtitles(words_data, corrections, deleted, mapper, srt_path,
 
 
 def build(words_path, ranges_path, analysis_path, video_path, draft_name,
-          speech_path=None, fps=30):
+          speech_path=None, fps=30, captions=True):
+    """captions=False 면 SRT 파일은 만들되 드래프트에는 넣지 않는다.
+
+    나레이션 전체 자막을 금지하는 납품 규격이 있다(화면에 이미 있는 말을
+    자막으로 되풀이하지 말라는 것). 그런 규격에서는 드래프트에 자막을 깔아
+    두면 편집자가 그걸 일일이 지워야 하고, 한둘 남으면 검수에 걸린다.
+    SRT 는 검수·자막 문구 작성에 쓰이므로 파일로는 계속 남긴다."""
     words_data = json.loads(Path(words_path).read_text(encoding="utf-8"))
     plan = json.loads(Path(ranges_path).read_text(encoding="utf-8"))
     analysis = {"corrections": [], "deletions": []}
@@ -264,17 +271,20 @@ def build(words_path, ranges_path, analysis_path, video_path, draft_name,
     srt_path = Path(ranges_path).parent / (Path(ranges_path).stem + ".srt")
     n_subs = build_subtitles(words_data, analysis.get("corrections", []),
                              deleted, mapper, srt_path, speech_segments)
-    script.import_srt(
-        str(srt_path),
-        track_name="자막",
-        style_reference=cc.TextSegment(
-            "", trange("0s", "1s"),
-            style=cc.TextStyle(size=8.0, auto_wrapping=True,
-                               align=1, color=(1.0, 1.0, 1.0)),
-            clip_settings=cc.ClipSettings(transform_y=-0.85),
-            border=cc.TextBorder(color=(0.0, 0.0, 0.0)),
-        ),
-    )
+    if captions:
+        script.import_srt(
+            str(srt_path),
+            track_name="자막",
+            style_reference=cc.TextSegment(
+                "", trange("0s", "1s"),
+                style=cc.TextStyle(size=8.0, auto_wrapping=True,
+                                   align=1, color=(1.0, 1.0, 1.0)),
+                clip_settings=cc.ClipSettings(transform_y=-0.85),
+                border=cc.TextBorder(color=(0.0, 0.0, 0.0)),
+            ),
+        )
+    else:
+        print(f"  자막 {n_subs}줄은 SRT 로만 남기고 드래프트에는 넣지 않았다")
     script.save()
 
     # pycapcut 은 오디오 채널 매핑을 안 넣어서, 캡컷이 저장할 때마다
@@ -319,4 +329,8 @@ def build(words_path, ranges_path, analysis_path, video_path, draft_name,
 
 
 if __name__ == "__main__":
-    build(*sys.argv[1:7])
+    pos, opt = split_args(sys.argv[1:], {"--fps"})
+    if len(pos) < 5:
+        raise SystemExit(__doc__)
+    build(*pos[:6], fps=int(opt.get("--fps", 30)),
+          captions="--no-captions" not in opt)
