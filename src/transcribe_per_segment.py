@@ -12,8 +12,17 @@
 출력: 덩어리별 전사 + 이웃끼리 유사도를 재서 재발화 후보를 표시한 JSON.
 느리다(덩어리 수만큼 모델 호출). GPU 가 있으면 크게 빨라진다.
 
+**0.6초 미만 덩어리는 전사하지 않는다.** 실측(110분 강의): 환각 18곳이 전부
+0.6초 미만 덩어리에서 났고, 0.6초 이상 699개에서는 한 건도 없었다. 짧은 조각만
+따로 넣으면 위스퍼가 initial_prompt 나 유튜브 자막 상투구를 그대로 뱉는다.
+컷은 파형 기준이라 이 덩어리를 안 적어도 영상에서는 사라지지 않는다.
+
+**용어집은 강의마다 바꿔라.** 다른 강의 용어집을 그대로 두면 그 문장이 통째로
+환각으로 나온다. `--용어집` 으로 파일을 준다.
+
 사용: python src/transcribe_per_segment.py <wav> <speech.json> <out.json>
                                            [모델] [디바이스]
+                                           [--용어집 <파일>] [--최소길이 0.6]
 """
 import difflib
 import json
@@ -27,6 +36,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cliargs import split_args  # noqa: E402
 import cuda_dlls  # noqa: E402,F401  (faster_whisper 보다 먼저 와야 한다)
 
 CACHE = Path(__file__).resolve().parent.parent / "models" / "hf"
@@ -37,6 +47,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 SR = 16000
 PAD = 0.15
+MIN_DUR = 0.6      # 이보다 짧은 덩어리는 전사하지 않는다 (환각이 여기서 난다)
 GLOSSARY = (
     "AI 동화책 출판 프로젝트 연수입니다. "
     "삽화, 그림체, 기준 이미지, 캐릭터 기준 이미지, 스타일 기준 이미지, "
@@ -78,7 +89,14 @@ def be_polite():
 
 
 def run(wav_path, speech_path, out_path, model_size="large-v3",
-        device="cpu", threads=None):
+        device="cpu", threads=None, glossary=None, min_dur=MIN_DUR):
+    prompt = GLOSSARY
+    if glossary and Path(glossary).exists():
+        prompt = Path(glossary).read_text(encoding="utf-8").strip()
+        print(f"용어집: {glossary}")
+    else:
+        print("용어집: 기본값 — 강의가 다르면 --용어집 으로 바꿔라")
+    min_dur = float(min_dur)
     speech = json.loads(Path(speech_path).read_text(
         encoding="utf-8"))["speech"]
     with wave.open(str(wav_path), "rb") as f:
@@ -116,10 +134,17 @@ def run(wav_path, speech_path, out_path, model_size="large-v3",
             if n in done:
                 takes.append(done[n])
                 continue
+            if b - a < min_dur:               # 짧은 조각은 환각만 만든다
+                rec = {"i": n, "start": a, "end": b, "text": "",
+                       "skipped": "짧음"}
+                takes.append(rec)
+                pf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                pf.flush()
+                continue
             clip = x[int(max(0, a - PAD) * SR):int((b + PAD) * SR)]
             segs, _ = model.transcribe(clip, language="ko", beam_size=5,
                                        condition_on_previous_text=False,
-                                       initial_prompt=GLOSSARY,
+                                       initial_prompt=prompt,
                                        vad_filter=False)
             txt = " ".join(s.text.strip() for s in segs).strip()
             rec = {"i": n, "start": a, "end": b, "text": txt}
@@ -165,4 +190,8 @@ def run(wav_path, speech_path, out_path, model_size="large-v3",
 
 
 if __name__ == "__main__":
-    run(*sys.argv[1:7])
+    pos, opt = split_args(
+        sys.argv[1:], {"--용어집", "--glossary", "--최소길이", "--min-dur"})
+    run(*pos[:6],
+        glossary=opt.get("--용어집") or opt.get("--glossary"),
+        min_dur=opt.get("--최소길이") or opt.get("--min-dur") or MIN_DUR)

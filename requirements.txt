@@ -3,3 +3,5 @@ silero-vad>=5.1
 torch>=2.0
 numpy>=1.24
 faster-whisper>=1.2
+transformers>=4.40
+soundfile>=0.12

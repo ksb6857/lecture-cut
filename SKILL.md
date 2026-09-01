@@ -14,8 +14,8 @@ description: 강의 녹화 mp4 를 파형(VAD) 기준으로 자동 컷 편집해
 
 ## 하는 일 / 안 하는 일
 
-한다: 발화 검출, 전사, 재발화 후보 탐지, 컷 계획, 캡컷 드래프트 생성,
-소리 검증, 검수 보고서, 사용자가 손본 편집본에서 컷 기준 역산.
+한다: 발화 검출, 전사, 두 번째 모델로 교차검증, 재발화 후보 탐지, 컷 계획,
+캡컷 드래프트 생성, 소리 검증, 검수 보고서, 사용자가 손본 편집본에서 컷 기준 역산.
 
 규격 프로필을 주면 납품 규격 점검도 한다(해상도·길이·파일명·라우드니스,
 허용 구간 밖의 자막, 금지 표현, 슬레이트 잔존). 기계가 못 보는 항목은 못 본다고
@@ -29,6 +29,7 @@ description: 강의 녹화 mp4 를 파형(VAD) 기준으로 자동 컷 편집해
 ```bash
 ffmpeg -version                                    # PATH 에 있어야 한다
 python -c "import pycapcut, numpy, torch"          # requirements.txt
+python -c "import transformers, soundfile"         # 3.5단계 교차검증용
 python <SKILL>/src/check_gpu.py                    # GPU 는 없어도 된다(느릴 뿐)
 ```
 
@@ -72,6 +73,7 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 [ ] 2 전사        transcribe          → <이름>_words.json
 [ ] 3 재발화      transcribe_per_segment + find_hidden/repeat_retakes
 [ ]   슬레이트    find_slates         → 파트별 촬영일 때만
+[ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words
 [ ] 4 내용 판단   청크 분석(LLM)      → <이름>_results/result_NN.json
 [ ] 5 병합        merge_analysis      → <이름>_analysis.json, _retakes.json
 [ ] 6 컷 계획     cut_planner         → <이름>_keep_ranges.json
@@ -125,10 +127,14 @@ python <SKILL>/src/analyze_audio.py "<원본.mp4>" <작업>/work/<이름>_speech
 
 ```bash
 ffmpeg -v error -i "<원본.mp4>" -vn -ac 1 -ar 16000 -c:a pcm_s16le -y <작업>/work/<이름>.wav
-python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json large-v3 cuda
+python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json large-v3 cuda <작업>/glossary/<이름>.txt
 ```
 
-마지막 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
+**용어집은 강의마다 새로 쓴다.** 마지막 인자가 그 파일이다. 다른 강의 용어집을
+그대로 두면 위스퍼가 짧은 무음 구간에서 그 문장을 통째로 뱉는다. 강의에 맞는
+용어집을 주면 전문용어 오전사가 크게 준다(실측 9종 중 7종).
+
+마지막에서 두 번째 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
 CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
 브루(Vrew) 파일이 있으면 1·2단계 대신 `extract_vrew.py` 를 써도 되지만,
 컷 경계는 여전히 1단계 결과를 쓴다.
@@ -140,7 +146,7 @@ CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
 따로 전사한다.
 
 ```bash
-python <SKILL>/src/transcribe_per_segment.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_persegment.json large-v3 cuda
+python <SKILL>/src/transcribe_per_segment.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_persegment.json large-v3 cuda --용어집 <작업>/glossary/<이름>.txt
 python <SKILL>/src/find_hidden_retakes.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>_hidden.json
 python <SKILL>/src/find_repeat_retakes.py <작업>/work/<이름>_words.json <작업>/work/<이름>_auto.json --review <작업>/work/<이름>_review.json
 ```
@@ -155,11 +161,34 @@ python <SKILL>/src/find_repeat_retakes.py <작업>/work/<이름>_words.json <작
 지우는 것. 판정은 시각을 손으로 옮겨 적지 말고 **덩어리 번호로 적어** 스크립트가
 시각을 가져가게 한다.
 
+### 3.5. 교차검증 — 위스퍼가 지어낸 말과 흘린 말을 찾는다
+
+위스퍼 한 벌로는 **없던 말을 지어낸 것**과 **있던 말을 통째로 흘린 것**을
+못 본다. 둘 다 높은 confidence 로 나와서 임계값으로 못 거른다. 언어모델이 없는
+CTC 모델을 하나 더 돌려 맞춘다. **CPU 로 110분 강의가 4분이다. GPU 는 필요 없다.**
+
+```bash
+python <SKILL>/src/crosscheck_ctc.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_ctc.json
+python <SKILL>/src/compare_transcripts.py <작업>/work/<이름>_words.json <작업>/work/<이름>_speech.json <작업>/work/<이름>_persegment.json <작업>/work/<이름>_ctc.json <작업>/work/<이름>_교차검증.md --접두 <작업>/work/<이름>
+python <SKILL>/src/fill_missing_words.py <작업>/work/<이름>_words.json <작업>/work/<이름>_missing.json <작업>/work/<이름>_words_full.json
+```
+
+**메운 뒤에는 4단계부터 `_words_full.json` 을 words.json 자리에 쓴다.**
+통짜 전사가 흘린 말이 전사에 없으면 재발화 판정이 그 구간을 못 본다. 같은
+문장을 세 번 말했는데 전사에 두 번만 있어 러프컷에 중복이 남은 사고가 났다.
+
+`_hallucination.json` 은 6단계 `cut_planner` 에 다른 삭제 지시와 함께 넘긴다.
+
+자세한 것과 실측값은 [docs/교차검증.md](docs/교차검증.md).
+
+
 ### 4. 내용 판단 (LLM 청크 분석)
 
 ```bash
-python <SKILL>/src/make_llm_transcript.py <작업>/work/<이름>_words.json <작업>/work/<이름>_chunks
+python <SKILL>/src/make_llm_transcript.py <작업>/work/<이름>_words_full.json <작업>/work/<이름>_chunks
 ```
+
+3.5단계를 돌렸으면 `_words_full.json` 을 쓴다. 안 돌렸으면 `_words.json` 이다.
 
 청크마다 서브에이전트를 병렬로 띄워 삭제 지시와 자막 교정을 받는다. 지시문과
 JSON 형식은 [docs/청크분석.md](docs/청크분석.md) 에 있다. 결과는
@@ -169,7 +198,7 @@ JSON 형식은 [docs/청크분석.md](docs/청크분석.md) 에 있다. 결과�
 
 ```bash
 python <SKILL>/src/merge_analysis.py <작업>/work/<이름>_results <작업>/work/<이름>_analysis.json <작업>/work/<이름>_retakes.json
-python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_retakes.json
+python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_retakes.json <작업>/work/<이름>_hallucination.json
 ```
 
 쉼을 얼마나 남길지는 `src/cut_planner.py` 의 `PARAMS` 가 정본이다. 기본값과
@@ -269,4 +298,5 @@ python <SKILL>/src/learn_from_edit.py <사람이_손본_드래프트> <자동편
 - [docs/컷-파라미터.md](docs/컷-파라미터.md) — 쉼 길이 기준값과 근거
 - [docs/청크분석.md](docs/청크분석.md) — 4단계 LLM 지시문과 JSON 형식
 - [docs/규격점검.md](docs/규격점검.md) — 납품 규격 프로필 만드는 법
+- [docs/교차검증.md](docs/교차검증.md) — 3.5단계 두 번째 모델과 실측값
 - [docs/GPU-SETUP.md](docs/GPU-SETUP.md) — GPU 설치·점검·문제 해결
