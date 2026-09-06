@@ -25,6 +25,12 @@ def run(words_p, missing_p, out_p):
     words = doc["words"]
     miss = json.loads(Path(missing_p).read_text(encoding="utf-8"))["segments"]
 
+    # words.json 의 i 는 전역 단어 번호이고, 자막 교정(corrections)과
+    # 삭제 지시(from_i/to_i)가 이 번호를 가리킨다. 메운 낱말에 같은 번호를
+    # 주면 남의 교정이 딸려 온다. **기존 최대값 뒤에 새 번호를 붙인다.**
+    # 시간순으로는 사이에 끼어들지만 번호는 뒤라서 기존 지시가 안 흔들린다.
+    nxt = max((w.get("i", -1) for w in words if w.get("type") == "word"),
+              default=-1) + 1
     added = []
     for m in miss:
         toks = [t for t in (m.get("text") or "").split() if t]
@@ -33,7 +39,7 @@ def run(words_p, missing_p, out_p):
         a, b = float(m["start"]), float(m["end"])
         step = (b - a) / len(toks)
         for k, t in enumerate(toks):
-            added.append({"i": -1, "type": "word", "text": t,
+            added.append({"i": nxt + len(added), "type": "word", "text": t,
                           "start": round(a + k * step, 3),
                           "end": round(a + (k + 1) * step, 3),
                           "filled": True})
