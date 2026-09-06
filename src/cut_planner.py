@@ -42,6 +42,14 @@ PARAMS = {
     # 이 자리의 무음을 일부러 늘렸다.
     "max_silence_scene": 1.20,
     "tail_ratio": 0.45,     # 남은 쉼을 앞말 뒤:뒷말 앞 = 45:55 로 나눈다
+    # 뒷말 앞에 최소한 이만큼은 남긴다. VAD 는 발화 시작을 늦게 잡는다.
+    # 실측(110분 강의 767구간): VAD 가 표시한 시작보다 먼저 소리가 올라온
+    # 시간이 90분위 95ms, 95분위 135ms 였다. 앞을 110ms 만 남기면 7% 에서
+    # 첫소리가 잘린다. 반대로 발화 끝 뒤에 남은 소리는 99분위가 8ms 라
+    # 뒤를 길게 남길 이유가 없다. 앞뒤 배분을 앞쪽으로 옮긴다.
+    # **쉼 전체 길이는 그대로다.** 같은 쉼 안에서 자리만 바뀐다.
+    "min_lead": 0.15,
+    "min_tail": 0.04,       # 그래도 말끝이 딱 붙어 끝나지는 않게
     "min_saving": 0.15,     # 이만큼도 못 줄이면 자르지 않음 (잔컷 방지)
     "start_lead": 0.30,     # 영상 맨 앞 여유
     "end_tail": 0.80,       # 맨 뒤 여유
@@ -233,11 +241,14 @@ def plan(speech_path, words_path, out_path, *retakes_paths, params=None,
         n_end, n_mid = (n_end + 1, n_mid) if ends else (n_end, n_mid + 1)
         avail_t = max(0.0, room_after(cur[1]))
         avail_l = max(0.0, room_before(seg[0]))
-        tail = min(cap * p["tail_ratio"], avail_t)
-        lead = min(cap - tail, avail_l)
+        # 뒷말 앞을 먼저 확보한다 (첫소리가 잘리지 않게)
+        want_lead = max(cap * (1.0 - p["tail_ratio"]), p["min_lead"])
+        want_lead = min(want_lead, max(0.0, cap - p["min_tail"]))
+        lead = min(want_lead, avail_l)
+        tail = min(cap - lead, avail_t)
         if tail + lead < cap:                  # 한쪽이 막히면 반대쪽에서 보충
-            tail = min(avail_t, tail + (cap - tail - lead))
             lead = min(avail_l, lead + (cap - tail - lead))
+            tail = min(avail_t, tail + (cap - tail - lead))
         blocks.append([cur[0], cur[1] + tail])
         cur = [seg[0] - lead, seg[1]]
         n_cuts += 1
