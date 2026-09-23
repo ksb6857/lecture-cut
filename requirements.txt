@@ -5,3 +5,9 @@ numpy>=1.24
 faster-whisper>=1.2
 transformers>=4.40
 soundfile>=0.12
+# 11단계 효과에만 필요하다
+python-pptx>=0.6.21
+lxml>=4.9
+Pillow>=10.0
+opencv-python>=4.8
+pywin32>=306; sys_platform == "win32"   # 교안을 파워포인트로 렌더할 때(export_slides·render_builds)
