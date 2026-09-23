@@ -162,7 +162,15 @@ def resolve(segments, ranges, info, words, delete_overlap, verbose=True):
         need = max(1, min(MIN_RUN, len(want)))
         if want and toks and common_run(want, toks) >= need:
             continue                     # 한 테이크는 살아 있다 — 정상
-        keep = max(g, key=lambda x: x["s"])   # 마지막 테이크를 살린다
+        # 사람이 파형·덩어리 전사로 확인하고 경계를 직접 잡은 지시(exact)는 되돌리지 않는다.
+        # 테이크가 '이와 같이' 처럼 두 낱말이면 3낱말 기준을 못 채워 충돌로 잘못 잡힌다(2026-09-23)
+        cands = [x for x in g if not x["d"].get("exact")]
+        if not cands:
+            if verbose:
+                print(f"    [충돌 보류] {', '.join(f'{x['s']:.0f}초' for x in g)} — "
+                      f"직접 확인한 지시라 되돌리지 않는다")
+            continue
+        keep = max(cands, key=lambda x: x["s"])   # 마지막 테이크를 살린다
         reverted.add(keep["k"])
         if verbose:
             txt = " ".join(w["text"] for w in keep["w"])[:46]

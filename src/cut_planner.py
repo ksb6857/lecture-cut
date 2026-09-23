@@ -27,8 +27,27 @@ max_silence 1.2초의 근거 (강의 영상 기준):
 """
 import bisect
 import json
+import re
 import sys
 from pathlib import Path
+
+# 한국어 문장이 끝나는 어미. 위스퍼는 한국어에 마침표를 잘 안 찍는다.
+# 2026-09-23 한 강의 전사는 부호가 2.9% 라 예전 판정(부호 3% 미만이면 모든 컷을
+# 문장 끝으로 본다)에 걸렸고, 문장 중간 쉼 0.20초가 한 곳도 적용되지 않았다.
+# 계획기는 "문장 중간 0곳"을 찍었는데 아무도 보지 않았다. 이제 어미로도 판정하고,
+# 문장 중간이 0곳이면 멈춘다(아래 plan 끝).
+_KO_END = re.compile(
+    r"(니다|[습입합됩갑봅옵]니까"
+    r"|(어|아|여|에|예|해|돼|와|워|봐|죠|지|네|군|데|걸|게|래|대|나|가|까|세|거든|잖아|고|구|서|란)요"
+    r"|죠|(?<![마보])다)[.?!,]?$")
+
+
+def ends_sentence(text):
+    """낱말 하나가 문장을 끝맺는가 (문장부호 또는 한국어 종결어미)."""
+    t = (text or "").strip()
+    if t[-1:] in ".?!":
+        return True
+    return len(t) > 1 and bool(_KO_END.search(t))
 
 PARAMS = {
     # 문장이 안 끝났는데 생긴 쉼 — 짧게. 뚝뚝 끊기는 느낌의 주범이다.
@@ -110,6 +129,10 @@ def load_deletions(retakes_paths, words):
             continue
         r = json.loads(Path(path).read_text(encoding="utf-8"))
         for d in r.get("deletions", []):
+            if d.get("caption_only"):
+                # 위스퍼가 지어낸 말·쪼갠 낱말 — 소리는 멀쩡하다. 자막에서만 뺀다.
+                # 이걸 소리 삭제로 먹이면 앞뒤 진짜 말이 같이 잘린다(2026-09-23)
+                continue
             if "from_t" in d:
                 ranges.append([float(d["from_t"]), float(d["to_t"])])
                 info.append(d)
@@ -193,29 +216,45 @@ def plan(speech_path, words_path, out_path, *retakes_paths, params=None,
     all_ends = sorted(e for _, e in segments)
     EPS = 0.05
 
+    # 이웃 발화와 0.05초 여유를 둔다. 다만 틈이 0.1초보다 좁으면(refine_speech 가
+    # 덩어리를 짧은 무음에서 나눈 곳) 여유를 틈의 절반으로 줄여 **틈 한가운데**를
+    # 자르게 한다. 안 그러면 컷이 다음 말 첫소리에 붙어 첫소리가 씹힌다(2026-09-23).
     def room_after(t):
         i = bisect.bisect_right(all_starts, t)
-        return (all_starts[i] - EPS - t) if i < len(all_starts) else 1e9
+        if i >= len(all_starts):
+            return 1e9
+        gap = all_starts[i] - t
+        return gap - min(EPS, gap / 2)
 
     def room_before(t):
         i = bisect.bisect_left(all_ends, t) - 1
-        return (t - (all_ends[i] + EPS)) if i >= 0 else 1e9
+        if i < 0:
+            return 1e9
+        gap = t - all_ends[i]
+        return gap - min(EPS, gap / 2)
 
-    # 컷 지점이 문장 끝인지 판정한다 (전사본에 문장부호가 있을 때만)
+    # 컷 지점이 문장 끝인지 판정한다.
+    # 한국어 전사면 문장부호 또는 종결어미로 가린다. 그 밖의 언어는 부호가
+    # 충분할 때만 가리고, 부호가 없으면 넉넉한 쪽(문장 끝)으로 본다.
     w_ends = sorted(w["end"] for w in words)
     by_end = {w["end"]: w for w in words}
     punct_ratio = (sum(1 for w in words if w["text"].rstrip()[-1:] in ".?!")
                    / max(len(words), 1))
     has_punct = punct_ratio > 0.03
+    korean = sum(1 for w in words[:400]
+                 if any("가" <= ch <= "힣" for ch in w["text"])) > 20
 
     def is_sentence_end(t):
         """t 직전 단어가 문장을 끝맺었나"""
-        if not has_punct:
-            return True          # 부호가 없는 전사본이면 넉넉한 쪽으로
         i = bisect.bisect_right(w_ends, t + 0.05) - 1
         if i < 0:
             return True
-        return by_end[w_ends[i]]["text"].rstrip()[-1:] in ".?!"
+        text = by_end[w_ends[i]]["text"]
+        if korean:
+            return ends_sentence(text)
+        if not has_punct:
+            return True          # 부호가 없는 전사본이면 넉넉한 쪽으로
+        return text.rstrip()[-1:] in ".?!"
 
     # 무음을 상한까지만 깎는다. 상한 이하의 쉼은 통째로 보존.
     total_dur = sp["duration"]
@@ -275,10 +314,18 @@ def plan(speech_path, words_path, out_path, *retakes_paths, params=None,
     Path(out_path).write_text(
         json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
 
+    result["n_mid"], result["n_end"], result["n_scene"] = n_mid, n_end, n_scene
+    Path(out_path).write_text(
+        json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"    쉼 배분: 문장 끝 {n_end}곳({p['max_silence_end']}초), "
           f"문장 중간 {n_mid}곳({p['max_silence_mid']}초)"
           + (f", 장면 전환 {n_scene}곳({p['max_silence_scene']}초)"
              if n_scene else ""))
+    if n_cuts >= 20 and n_mid == 0:
+        raise SystemExit(
+            "문장 중간 쉼이 0곳입니다. 문장 끝 판정이 안 먹었습니다 — 전부 "
+            f"{p['max_silence_end']}초로 들어갑니다. 전사본의 문장부호·어미를 "
+            "확인하세요(2026-09-23 에 이걸 놓쳐 쉼 규칙이 통째로 빠졌다)")
     print(f"OK: {len(padded)} blocks, 무음 컷 {n_cuts}곳, "
           f"재발화 구간 {dropped}개 제거")
     if unapplied:
