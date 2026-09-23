@@ -14,15 +14,20 @@ description: 강의 녹화 mp4 를 파형(VAD) 기준으로 자동 컷 편집해
 
 ## 하는 일 / 안 하는 일
 
-한다: 발화 검출, 전사, 두 번째 모델로 교차검증, 재발화 후보 탐지, 컷 계획,
-캡컷 드래프트 생성, 소리 검증, 검수 보고서, 사용자가 손본 편집본에서 컷 기준 역산.
+한다: 발화 검출, 전사, 두 번째 모델로 교차검증, 재발화 후보 탐지, 무음에서만 나누기,
+컷 계획, 검산 게이트, 캡컷 드래프트 생성, 소리 검증, 검수 보고서, 사용자가 손본 편집본에서
+컷 기준 역산.
+
+효과도 얹는다(11단계): 교안에 나타내기 애니메이션 넣기, 이미 찍은 영상에 교안 단계와
+작은 글씨 확대 굽기, 강조 박스, 장면 전환.
 
 규격 프로필을 주면 납품 규격 점검도 한다(해상도·길이·파일명·라우드니스,
 허용 구간 밖의 자막, 금지 표현, 슬레이트 잔존). 기계가 못 보는 항목은 못 본다고
 목록으로 남긴다.
 
-안 한다: 강조 상자·스티커·확대 같은 효과, 오프닝/클로징 조립, 오디오 라우드니스
-보정, 핵심 자막 문구 작성. 이건 플랫폼마다 달라서 각 프로젝트 폴더가 맡는다.
+안 한다: 오프닝/클로징 조립, 스티커, 오디오 라우드니스 보정, 핵심 자막 문구 작성.
+이건 플랫폼마다 달라서 각 프로젝트 폴더가 맡는다. 노하우를 어느 층에 두는지는
+[docs/노하우-지도.md](docs/노하우-지도.md).
 
 ## 실행 전 점검
 
@@ -76,11 +81,14 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 [ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words
 [ ] 4 내용 판단   청크 분석(LLM)      → <이름>_results/result_NN.json
 [ ] 5 병합        merge_analysis      → <이름>_analysis.json, _retakes.json
-[ ] 6 컷 계획     cut_planner         → <이름>_keep_ranges.json
+[ ] 6 무음 분할   refine_speech       → <이름>_speech_refined.json
+[ ]   컷 계획     cut_planner         → <이름>_keep_ranges.json ("문장 중간 N곳" 을 읽는다)
+[ ] 6.5 검산      final_check + 들리는 대본 읽기 → 기준을 넘으면 멈춘다
 [ ] 7 드래프트    build_capcut_draft  → 캡컷 드래프트 + SRT (소리 검증 자동)
 [ ] 8 검증        verify_cuts         → 말 잘림 0건 확인
 [ ] 9 보고서      make_report         → <이름>_보고서.md
 [ ] 10 규격 점검  check_guidelines    → 프로필이 있을 때만
+[ ] 11 효과       ppt_anim · bake_builds · apply_transitions · apply_highlights → 요청이 있을 때
 ```
 
 `<이름>` 은 강의 하나를 가리키는 짧은 영문 이름을 쓴다(`ep03` 처럼). 한글
@@ -174,6 +182,8 @@ python <SKILL>/src/fill_missing_words.py <작업>/work/<이름>_words.json <작�
 ```
 
 **메운 뒤에는 4단계부터 `_words_full.json` 을 words.json 자리에 쓴다.**
+**3단계 재발화 검출도 이 파일로 다시 돌린다.** 2026-09-20 에 이걸 안 해서
+낱말 261개가 안 보였고, 실패 테이크가 든 블록 46개를 "말 없는 블록"으로 오해했다.
 통짜 전사가 흘린 말이 전사에 없으면 재발화 판정이 그 구간을 못 본다. 같은
 문장을 세 번 말했는데 전사에 두 번만 있어 러프컷에 중복이 남은 사고가 났다.
 
@@ -198,12 +208,37 @@ JSON 형식은 [docs/청크분석.md](docs/청크분석.md) 에 있다. 결과�
 
 ```bash
 python <SKILL>/src/merge_analysis.py <작업>/work/<이름>_results <작업>/work/<이름>_analysis.json <작업>/work/<이름>_retakes.json
-python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_retakes.json <작업>/work/<이름>_hallucination.json
+python <SKILL>/src/refine_speech.py <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>.wav <작업>/work/<이름>_speech_refined.json <작업>/work/<이름>_retakes.json <작업>/work/<이름>_hallucination.json --levels <작업>/work/<이름>_levels.npy --report <작업>/work/<이름>_못나눈경계.json --snapped <작업>/work/<이름>_retakes_snapped.json
+python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech_refined.json <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_retakes_snapped.json
 ```
+
+**삭제 지시가 발화 덩어리 한가운데 걸리면 `refine_speech` 가 진짜 무음(-50dB 40ms 이상)에서만
+덩어리를 나눈다.** 무음이 없으면 나누지 않고 목록에 남긴다. 낱말 시각(±0.3~1초 어긋남)으로
+자르면 말 위에 컷이 떨어진다. 2026-09-23 에 904곳 중 84곳이 그랬다.
+
+`cut_planner` 는 종결어미로 문장 끝을 가려 쉼을 달리 남긴다. **컷이 20곳 넘는데 문장 중간이
+0곳이면 멈춘다.** 계획기가 찍는 "문장 중간 N곳 · 끝 M곳"을 읽는다.
 
 쉼을 얼마나 남길지는 `src/cut_planner.py` 의 `PARAMS` 가 정본이다. 기본값과
 그 근거는 [docs/컷-파라미터.md](docs/컷-파라미터.md). **문서에 적힌 숫자를
 믿지 말고 코드를 읽어라.**
+
+### 6.5. 검산 게이트 — 드래프트를 만들기 전에
+
+```bash
+python <SKILL>/src/final_check.py <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_words.json <작업>/work/<이름>_speech_refined.json <작업>/work/<이름>.wav --levels <작업>/work/<이름>_levels.npy --deletions <작업>/work/<이름>_retakes.json --takes <작업>/work/<이름>_persegment.json --report <작업>/work/<이름>_검산.md
+```
+
+| 항목 | 기준 |
+|---|---|
+| 소리 위(-45dB 초과) 컷 지점 | 0곳 |
+| 문장 중간 쉼 | 0곳이 아니고 중앙값 0.30초 이하 |
+| 삭제 지시가 편집본에 남은 시간 | 0.5초 이하 |
+| 연달아 같은 낱말 · 같은 문장 | 0건 |
+
+기준을 넘으면 0 이 아닌 값으로 끝난다. **통과해도 들리는 대본을 끝까지 읽는다.** 컷 계획대로
+잘랐을 때 실제로 들리는 말을 덩어리 단위로 뽑아 읽으면 검산기가 못 잡는 헛시작과 되풀이가
+보인다(2026-09-23 에 25곳). 자세한 것은 [docs/컷-마무리.md](docs/컷-마무리.md).
 
 ### 7. 드래프트 생성
 
@@ -252,6 +287,21 @@ python <SKILL>/src/check_guidelines.py <최종1.mp4> <최종2.mp4> --프로필 <
 항목은 프로필의 `직접확인` 에 적어 두면 보고서 끝에 체크박스로 실린다.**
 그 목록을 사용자에게 그대로 넘긴다. 건너뜀이 많으면 통과 건수를 믿지 마라.
 
+### 11. 효과 (요청이 있을 때)
+
+한 화면이 오래 멈춰 있으면 지금 어디를 말하는지 알기 어렵다. 순서와 규칙, 사고 기록은
+[docs/효과.md](docs/효과.md).
+
+```
+교안 파일     slide_blocks → ppt_anim (사본에) → 차이 0 · 파워포인트로 열어 클릭 수 확인
+영상 굽기     export_slides → render_builds → compose_builds → (확대 계획) → bake_builds 한 판
+드래프트      구운 파일로 build_capcut_draft → apply_transitions → apply_highlights → draft_doctor 진단
+```
+
+- 효과는 전부 **원본 시각**으로 계획한다. 컷이 바뀌어도 다시 붙이면 제자리로 간다
+- 도형·애니메이션·전환은 사람이 만든 드래프트에서 복제한다. 값을 짓지 않는다
+- 강조 박스와 확대는 **확인 그림을 전부 본다.** 숫자로는 엉뚱한 곳에 붙은 상자를 못 잡는다
+
 ## 끝내기
 
 검수 보고서를 사용자에게 넘기고 세 가지를 함께 알린다: 완성 드래프트 이름,
@@ -299,4 +349,8 @@ python <SKILL>/src/learn_from_edit.py <사람이_손본_드래프트> <자동편
 - [docs/청크분석.md](docs/청크분석.md) — 4단계 LLM 지시문과 JSON 형식
 - [docs/규격점검.md](docs/규격점검.md) — 납품 규격 프로필 만드는 법
 - [docs/교차검증.md](docs/교차검증.md) — 3.5단계 두 번째 모델과 실측값
+- [docs/컷-마무리.md](docs/컷-마무리.md) — 쉼 규칙 확인, 무음에서만 나누기, 들리는 대본, 검산 게이트
+- [docs/효과.md](docs/효과.md) — 교안 애니메이션, 강조 박스, 장면 전환, 작은 글씨 확대
+- [docs/노하우-지도.md](docs/노하우-지도.md) — 공통·플랫폼·강의 노하우를 어디에 두나
+- [docs/피드백-원장.md](docs/피드백-원장.md) — 받은 지적과 그걸 막는 도구
 - [docs/GPU-SETUP.md](docs/GPU-SETUP.md) — GPU 설치·점검·문제 해결
