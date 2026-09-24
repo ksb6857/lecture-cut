@@ -40,7 +40,8 @@ def api_key(path=None):
     p = Path(path or KEY_FILE)
     if p.exists():
         return p.read_text(encoding="utf-8").strip()
-    raise SystemExit("ElevenLabs API 키가 없습니다. ELEVENLABS_API_KEY 나 --key 로 주세요.")
+    raise SystemExit("ElevenLabs API 키가 없습니다. ELEVENLABS_API_KEY 나 --key 로 주세요.\n"
+                     "키가 없으면 무료인 위스퍼 길(transcribe.py)로 전사하면 됩니다(SKILL.md 2단계).")
 
 
 def split_points(speech, total, chunk=1800.0, reach=180.0):

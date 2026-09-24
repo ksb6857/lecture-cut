@@ -32,7 +32,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import audio_levels as L  # noqa: E402
-from transcribe_scribe import api_key, call, keyterms_from  # noqa: E402
+# transcribe_scribe(requests)는 실제로 다시 전사할 때만 부른다. uncovered() 만 쓰는 stt_benchmark 는 키·requests 없이 돈다
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -72,6 +72,7 @@ def looks_like_noise(text, dur):
 
 
 def transcribe_stretch(wav, a, b, cache, key, terms):
+    from transcribe_scribe import call
     out = Path(cache) / f"{Path(wav).stem}_unc_{a:.2f}-{b:.2f}.json"
     if out.exists():
         return json.loads(out.read_text(encoding="utf-8")), True
@@ -102,6 +103,7 @@ def main(argv):
     total = len(db) * L.HOP
     spots = uncovered(words + events, speech, db)
     print(f"덮지 않은 소리 {len(spots)}곳 · 소리 {sum(c for *_, c in spots):.1f}초", flush=True)
+    from transcribe_scribe import api_key, keyterms_from
     cache = Path(opt.get("--cache", Path(out_p).parent / "scribe_uncovered"))
     cache.mkdir(parents=True, exist_ok=True)
     key = api_key(opt.get("--key"))

@@ -92,7 +92,8 @@ video-use 가 "지킬 것 12가지 말고는 전부 예시 값"으로 나눈 방
 [ ] 0 방향 확인   요청을 항목으로 되짚고, 답에 따라 작업이 달라지는 것만 묻는다 → 러프컷보다 큰 요청일 때
 [ ] 0 파트 병합   merge_parts         → 원본이 한 벌이면 건너뛴다
 [ ] 1 발화 검출   analyze_audio       → <이름>_speech.json
-[ ] 2 전사        transcribe_scribe + fill_uncovered (키가 있으면) 또는 transcribe (위스퍼) → <이름>_words.json
+[ ] 2 전사        transcribe (위스퍼, 무료·기본) 또는 ElevenLabs 키가 있으면 transcribe_scribe + fill_uncovered
+                                         (유료라 처음에 비용을 알리고 묻는다) → <이름>_words.json
 [ ] 3 재발화      (위스퍼면 transcribe_per_segment +) find_hidden/repeat_retakes
 [ ]   슬레이트    find_slates         → 파트별 촬영일 때만
 [ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words → 위스퍼로 전사했을 때
@@ -161,6 +162,21 @@ python <SKILL>/src/analyze_audio.py "<원본.mp4>" <작업>/work/<이름>_speech
 
 ### 2. 전사
 
+전사는 두 길이 있다. **먼저 어느 길로 갈지 정한다.**
+
+| | 위스퍼 길 | Scribe 길 |
+|---|---|---|
+| 조건 | 없음(기본) | ElevenLabs API 키 |
+| 비용 | 없음 | 유료(시간당 약 0.27달러, 구독이면 3시간에 약 4,700크레딧) |
+| 이어서 할 것 | 3단계 덩어리 전사 + 3.5단계 교차검증 | `fill_uncovered` 하나 |
+
+- **키가 없으면 묻지 않고 위스퍼 길로 간다.** 위스퍼 길만으로 전 과정이 끝까지 돈다
+- 키가 있으면 Scribe 길을 권하되, 유료이므로 **처음 한 번은 녹음 길이와 예상 비용을 알리고 사용자 동의를 받는다**
+- 키는 환경변수 `ELEVENLABS_API_KEY` 나 키 파일(`ELEVENLABS_KEY_FILE` 이 가리키는 곳, 없으면 `~/.elevenlabs.key`)로 준다.
+  **키 파일은 저장소·작업 폴더 밖, 동기화되지 않는 곳에 둔다. 키 값을 출력하거나 명령·문서·커밋에 적지 않는다**
+
+**위스퍼 길**
+
 ```bash
 ffmpeg -v error -i "<원본.mp4>" -vn -ac 1 -ar 16000 -c:a pcm_s16le -y <작업>/work/<이름>.wav
 python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json large-v3 cuda <작업>/glossary/<이름>.txt
@@ -170,8 +186,15 @@ python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이�
 그대로 두면 위스퍼가 짧은 무음 구간에서 그 문장을 통째로 뱉는다. 강의에 맞는
 용어집을 주면 전문용어 오전사가 크게 준다(실측 9종 중 7종).
 
-**ElevenLabs 키가 있으면 Scribe 로 전사한다(유료, 시간당 0.22달러. 구독이면 3시간에 약 4,700크레딧).**
-용어집을 keyterms 로 넘기고, 결과 형식은 위스퍼와 같다. 바로 이어 `fill_uncovered` 로 Scribe 가 지운 곳을 메운다.
+마지막에서 두 번째 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
+CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
+브루(Vrew) 파일이 있으면 1·2단계 대신 `extract_vrew.py` 를 써도 되지만,
+컷 경계는 여전히 1단계 결과를 쓴다. 위스퍼 길은 3단계와 3.5단계를 꼭 한다.
+
+**Scribe 길**
+
+wav 는 위와 같이 만든다. 용어집을 keyterms 로 넘기고, 결과 형식은 위스퍼와 같다.
+바로 이어 `fill_uncovered` 로 Scribe 가 지운 곳을 메운다.
 
 ```bash
 python <SKILL>/src/transcribe_scribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words_scribe.json --glossary <작업>/glossary/<이름>.txt
@@ -196,12 +219,8 @@ python <SKILL>/src/fill_uncovered.py <작업>/work/<이름>.wav <작업>/work/<�
   낱말 안의 쉼으로는 못 가린다(된소리 앞 폐쇄 때문에 528낱말이 걸린다). 6.5단계 들리는 대본 읽기에서 잡는다
 - Scribe 로 전사했으면 3단계 `transcribe_per_segment` 와 3.5단계 교차검증은 건너뛴다. 메운 words.json 으로 바로
   `find_repeat_retakes` 를 돌린다. 컷 경계는 어느 쪽이든 파형으로 정한다
-- 키가 없거나 인터넷이 안 되면 아래 위스퍼 경로로 한다. 다른 강사·다른 녹음이면 `stt_benchmark.py` 로 한 번 재 본다
-
-마지막에서 두 번째 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
-CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
-브루(Vrew) 파일이 있으면 1·2단계 대신 `extract_vrew.py` 를 써도 되지만,
-컷 경계는 여전히 1단계 결과를 쓴다.
+- 전사 중에 키가 거절되거나 인터넷이 끊기면 위스퍼 길로 돌아간다. 다른 강사·다른 녹음이면 `stt_benchmark.py` 로
+  두 길을 한 번 재 보고 정한다
 
 ### 3. 재발화 찾기
 
