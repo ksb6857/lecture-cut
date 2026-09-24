@@ -191,8 +191,20 @@ def check(keep, words, speech, db, offset=0.0, skip=(), deletions=(), takes=None
                     reps.append((round(a0 + offset, 2), raw0[:24], "(덩어리 안 되풀이)"))
                     break
 
+    # 이음매 틱: 가장자리 앞뒤 35ms 가 -62dB 보다 시끄러우면 이어 붙인 곳에서 작게 튄다(2026-09-24)
+    noisy = []
+    for i, (a, b) in enumerate(blocks):
+        for kind, t in (("시작", a), ("끝", b)):
+            w = t - offset
+            if skipped(t) or not (0.05 < w < dur - 0.05):
+                continue
+            i0, i1 = int((w - 0.035) / L.HOP), int((w + 0.035) / L.HOP) + 1
+            v = float(db[max(0, i0):i1].max())
+            if v > -62:
+                noisy.append((kind, round(t, 2), round(v, 1)))
+
     return {
-        "points": len(points), "on_sound": on, "edge": edge,
+        "points": len(points), "on_sound": on, "edge": edge, "noisy": noisy,
         "mid": mids, "end": ends, "tight": tight,
         "residue": residue, "left": left, "dups": dups, "reps": reps, "reviewed": ok,
     }
@@ -222,6 +234,7 @@ def report(r):
         "| 검산 | 결과 | 기준 |", "|---|---|---|",
         f"| 컷 지점 소리 위 (>-45dB) | {len(r['on_sound'])} / {r['points']} | 0 |",
         f"| 애매 (-50~-45dB) | {len(r['edge'])} | 참고 |",
+        f"| 조용하지 않은 가장자리 (앞뒤 35ms > -62dB) | {len(r.get('noisy', []))} | 참고. 빌드 뒤 apply_audio_fades |",
         f"| 문장 중간 쉼 | {f(r['mid'])} | 중앙 0.30 이하 |",
         f"| 문장 끝 쉼 | {f(r['end'])} | 참고 |",
         f"| 0.08초보다 붙은 이음매 | {len(r['tight'])} | 참고 |",

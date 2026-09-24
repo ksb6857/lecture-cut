@@ -27,6 +27,8 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import audio_levels as L  # noqa: E402
 
@@ -193,6 +195,56 @@ def snap_edges(keep_ranges, speech, db, offset=0.0):
                 moved += 1
         out.append([round(wa + offset, 6), round(wb + offset, 6)])
     return out, moved
+
+
+def quiet_edges(keep_ranges, speech, db, offset=0.0, quiet=-62.0, reach=0.12, guard=0.035):
+    """컷 가장자리 앞뒤 guard(35ms)가 quiet(-62dB)보다 조용하도록 가장 가까운 조용한 곳으로 옮긴다.
+
+    snap_edges 는 -50dB 를 넘는 가장자리만 본다. 그런데 숨소리·잔향이 -50~-60dB 로 남은 곳에서 자르면
+    이어 붙인 곳에서 '틱' 소리가 난다. 2026-09-24 11차시 미리보기에서 489곳 중 4곳(-32~-39dBFS)이 그랬다.
+    캡컷은 소리를 마이크로초 단위로, 화면은 1/30초 단위로 자르므로 한 점이 아니라 앞뒤 35ms 가 조용해야 한다.
+
+    - 발화 안으로는 들어가지 않는다(시작은 첫 발화 30ms 앞까지, 끝은 마지막 발화 30ms 뒤부터)
+    - 블록을 넓히는 쪽으로 옮길 때 새로 들어오는 구간에 -50dB 넘는 소리가 있으면 안 옮긴다
+      (잘라 낸 헛시작의 꼬리를 도로 들이지 않는다)
+    - 앞뒤 블록과 겹치지 않는다
+    """
+    sp = [tuple(s) for s in speech["speech"]]
+    H = L.HOP
+
+    def win_max(t):
+        i0, i1 = max(0, int((t - guard) / H)), min(len(db), int((t + guard) / H) + 1)
+        return float(db[i0:i1].max()) if i1 > i0 else -120.0
+
+    def span_max(x, y):
+        i0, i1 = max(0, int(min(x, y) / H)), min(len(db), int(max(x, y) / H) + 1)
+        return float(db[i0:i1].max()) if i1 > i0 else -120.0
+
+    rs = [[a - offset, b - offset] for a, b in keep_ranges]
+    moved = 0
+    for k, (wa, wb) in enumerate(rs):
+        inner = [(max(wa, x), min(wb, y)) for x, y in sp if y > wa and x < wb]
+        lo_prev = rs[k - 1][1] + 0.02 if k else 0.0
+        hi_next = rs[k + 1][0] - 0.02 if k + 1 < len(rs) else len(db) * H
+        # 시작
+        if win_max(wa) > quiet:
+            limit = (inner[0][0] - 0.03) if inner else wb - 0.05
+            cands = [t for t in np.arange(max(lo_prev, wa - reach), min(limit, wa + reach), H)
+                     if (t >= wa or span_max(t, wa) <= L.SILENT)]
+            best = min(cands, key=lambda t: (win_max(t) > quiet, abs(t - wa)), default=None)
+            if best is not None and win_max(best) <= quiet:
+                rs[k][0] = round(float(best), 3)
+                moved += 1
+        # 끝
+        if win_max(wb) > quiet:
+            limit = (inner[-1][1] + 0.03) if inner else rs[k][0] + 0.05
+            cands = [t for t in np.arange(max(limit, wb - reach), min(hi_next, wb + reach), H)
+                     if (t <= wb or span_max(wb, t) <= L.SILENT)]
+            best = min(cands, key=lambda t: (win_max(t) > quiet, abs(t - wb)), default=None)
+            if best is not None and win_max(best) <= quiet:
+                rs[k][1] = round(float(best), 3)
+                moved += 1
+    return [[round(a + offset, 6), round(b + offset, 6)] for a, b in rs], moved
 
 
 def main(argv):
