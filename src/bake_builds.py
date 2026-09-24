@@ -35,6 +35,24 @@ def q(t):
     return round(t * FPS) / FPS
 
 
+def place_reveal(onset, keep, fade=0.5, tail=0.6):
+    """항목을 말하기 시작하는 시각(onset)에 **다 보이도록** fade 만큼 먼저 나타나기 시작할 시각.
+
+    video-use 의 '효과는 그 낱말을 말할 때 다 떠 있게' 원칙이다. 말과 동시에 페이드를 시작하면
+    말을 시작하고 0.5초 뒤에야 항목이 다 보인다.
+    - 앞당길 자리가 잘려 나간 곳이면 그 블록 시작 0.03초 뒤까지만 당긴다
+    - onset 이 잘린 곳이거나 블록 끝 tail 초 안이면 페이드가 잘리므로 다음 블록 시작 0.03초 뒤로 민다
+    keep 은 원본 시각 [[시작, 끝], ...].
+    """
+    for p, q in keep:
+        if p <= onset < q:
+            if q - onset >= tail:
+                return round(max(p + 0.03, onset - fade), 3)
+            break
+    nxt = next((p for p, q in keep if p > onset), None)
+    return round(nxt + 0.03, 3) if nxt is not None else onset
+
+
 def span_clip(sp, out, fade=0.5):
     a, b = q(sp["a"]), q(sp["b"])
     D = b - a

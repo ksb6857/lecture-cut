@@ -5,6 +5,7 @@ numpy>=1.24
 faster-whisper>=1.2
 transformers>=4.40
 soundfile>=0.12
+requests>=2.31   # ElevenLabs Scribe 전사(transcribe_scribe)를 쓸 때
 # 11단계 효과에만 필요하다
 python-pptx>=0.6.21
 lxml>=4.9
