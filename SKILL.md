@@ -92,17 +92,18 @@ video-use 가 "지킬 것 12가지 말고는 전부 예시 값"으로 나눈 방
 [ ] 0 방향 확인   요청을 항목으로 되짚고, 답에 따라 작업이 달라지는 것만 묻는다 → 러프컷보다 큰 요청일 때
 [ ] 0 파트 병합   merge_parts         → 원본이 한 벌이면 건너뛴다
 [ ] 1 발화 검출   analyze_audio       → <이름>_speech.json
-[ ] 2 전사        transcribe (위스퍼) 또는 transcribe_scribe (ElevenLabs, 유료) → <이름>_words.json
-[ ] 3 재발화      transcribe_per_segment + find_hidden/repeat_retakes
+[ ] 2 전사        transcribe_scribe + fill_uncovered (키가 있으면) 또는 transcribe (위스퍼) → <이름>_words.json
+[ ] 3 재발화      (위스퍼면 transcribe_per_segment +) find_hidden/repeat_retakes
 [ ]   슬레이트    find_slates         → 파트별 촬영일 때만
-[ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words
+[ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words → 위스퍼로 전사했을 때
 [ ] 4 내용 판단   청크 분석(LLM)      → <이름>_results/result_NN.json
 [ ] 5 병합        merge_analysis      → <이름>_analysis.json, _retakes.json
 [ ] 6 무음 분할   refine_speech       → <이름>_speech_refined.json
 [ ]   컷 계획     cut_planner         → <이름>_keep_ranges.json ("문장 중간 N곳" 을 읽는다)
 [ ]   가장자리    snap_edges · quiet_edges → 이음매 앞뒤 35ms 가 -62dB 아래로
 [ ] 6.5 검산      final_check + 들리는 대본 읽기 → 기준을 넘으면 멈춘다
-[ ] 6.6 길이      length_budget       → 목표보다 길 때만. 후보표(무엇·왜·빼면)를 사용자가 고른다
+[ ] 6.6 길이      length_budget       → 목표보다 길 때만. 후보표(무엇·왜·빼면)를 사용자가 고르거나,
+                                         apply_notes 로 드래프트에 표시해 사용자가 보며 덜어낸다(맨 마지막에)
 [ ] 7 드래프트    build_capcut_draft  → 캡컷 드래프트 + SRT (소리 검증 자동)
 [ ]   이음매 페이드 apply_audio_fades  → 조용하지 않은 이음매에만 1프레임
 [ ] 7.6 자가 검사  render_preview + self_check → 확인 그림을 다 보고 나서 보여 준다(3번까지)
@@ -169,15 +170,33 @@ python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이�
 그대로 두면 위스퍼가 짧은 무음 구간에서 그 문장을 통째로 뱉는다. 강의에 맞는
 용어집을 주면 전문용어 오전사가 크게 준다(실측 9종 중 7종).
 
-**ElevenLabs Scribe 로도 전사할 수 있다(유료, 시간당 0.22달러).** 말 그대로 적어서(추임새·되풀이 보존)
-재발화가 전사에 남고, 용어집을 keyterms 로 넘긴다. 결과 형식은 같다.
+**ElevenLabs 키가 있으면 Scribe 로 전사한다(유료, 시간당 0.22달러. 구독이면 3시간에 약 4,700크레딧).**
+용어집을 keyterms 로 넘기고, 결과 형식은 위스퍼와 같다. 바로 이어 `fill_uncovered` 로 Scribe 가 지운 곳을 메운다.
 
 ```bash
-python <SKILL>/src/transcribe_scribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json --glossary <작업>/glossary/<이름>.txt
+python <SKILL>/src/transcribe_scribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words_scribe.json --glossary <작업>/glossary/<이름>.txt
+python <SKILL>/src/fill_uncovered.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words_scribe.json <작업>/work/<이름>_words.json --levels <작업>/work/<이름>_levels.npy --glossary <작업>/glossary/<이름>.txt --report <작업>/work/<이름>_uncovered.json
 ```
 
-**어느 쪽을 쓸지는 비교 수치로 정한다.** 한 강의로 두 전사를 돌려 `stt_benchmark.py` 로 말 빠짐·
-무음 속 낱말·시각 오차·재발화 보존·용어 표기를 잰다. 컷은 어느 쪽이든 파형으로 자른다.
+한 강의(191분 녹음)로 잰 값이다(`stt_benchmark.py`, 2026-09-24).
+
+| | 위스퍼+보강 | Scribe | Scribe+메움 |
+|---|---|---|---|
+| 낱말 없는 발화 구간 | 16곳 9.4초 | 8곳 12.1초 | 5곳 6.5초 |
+| 무음 속 낱말(지어냄) | 16 | 2 | 2 |
+| 쉼 뒤 첫 낱말 시작 오차 90% | 0.51초 | 0.09초 | 0.09초 |
+| 낱말이 덮지 않은 소리 | 108곳 35.8초 | 50곳 31.1초 | 13곳 7.5초 |
+| 문장부호 비율 | 2.9% | 12.1% | 11.9% |
+| 용어(제미나이·Gems 등) | 대부분 틀림 | 다 맞음 | 다 맞음 |
+
+- **Scribe 는 말 그대로 적는 설정이어도 실패 테이크와 되풀이를 지운다.** 「제목을 제목을」은 「제목을」, 헛시작 문장은 통째로 뺀다.
+  그대로 쓰면 재발화가 컷에 남는다. 그래서 `fill_uncovered` 가 필수다. 시각이 정확해서 지운 곳이 '소리는 나는데 낱말이
+  없는 곳'으로 드러나고, 그 조각만 따로 다시 전사하면 앞뒤 문맥이 없어 지우지 않는다(50곳 중 42곳에서 75낱말)
+- **아직 못 잡는 것**: 아주 짧은 말더듬을 한 낱말로 합쳐 적은 곳(「하나 하나」→「하나하나」). 한 강의에 5곳쯤이다.
+  낱말 안의 쉼으로는 못 가린다(된소리 앞 폐쇄 때문에 528낱말이 걸린다). 6.5단계 들리는 대본 읽기에서 잡는다
+- Scribe 로 전사했으면 3단계 `transcribe_per_segment` 와 3.5단계 교차검증은 건너뛴다. 메운 words.json 으로 바로
+  `find_repeat_retakes` 를 돌린다. 컷 경계는 어느 쪽이든 파형으로 정한다
+- 키가 없거나 인터넷이 안 되면 아래 위스퍼 경로로 한다. 다른 강사·다른 녹음이면 `stt_benchmark.py` 로 한 번 재 본다
 
 마지막에서 두 번째 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
 CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
@@ -291,6 +310,18 @@ python <SKILL>/src/length_budget.py 예산 <작업>/work/<이름>_keep_ranges.js
 구간표를 보고 뺄 후보를 역할(되풀이, 곁가지, 꼬인 문장, 예시 세부, 말 없는 장, 설명)로 고른다.
 **후보마다 무엇·왜·빼면을 적는다.** 누적 길이 표를 사용자에게 보여 주고 고른 번호만
 `--pick 1,2 --deletions <지시.json>` 으로 원본 시각 삭제 지시로 바꿔 6단계를 다시 돈다.
+
+**사용자가 영상을 보며 직접 덜어내겠다고 하면** 번호를 받지 않고 드래프트에 검토 표시를 붙인다.
+후보 구간 위에 노란 글자(번호·추천 여부·길이·무엇·왜·빼면)를 화면 위쪽에 띄우는 따로 트랙이다.
+사용자는 캡컷에서 보고 덜어낸 뒤 트랙째 지운다.
+
+```bash
+python <SKILL>/src/apply_notes.py <드래프트이름> <작업>/work/<이름>_검토표시.json [--dry]
+```
+
+- 계획은 원본 시각(`src`)으로 적는다. 붙일 때 지금 컷으로 편집 시각을 계산하므로 다시 빌드해도 제자리로 간다
+- **자동 작업(효과·박스·전환·페이드)을 다 끝낸 뒤 맨 마지막에 붙인다.** 사용자가 손대기 시작하면 다시 빌드할 수 없다
+- 글자 소재는 드래프트 자막 줄을 복제한다. 겹치는 표시는 둘째 트랙으로 간다. 다시 돌리면 같은 이름 트랙을 바꿔 붙인다
 
 ### 7. 드래프트 생성
 

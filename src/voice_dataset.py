@@ -8,9 +8,16 @@
   - 편집본 음성 파일(러프컷 오디오를 내보낸 것)은 그대로 쓴다
   - 원본 + keep.json 이면 남는 블록만 이어 쓴다(from 초 앞은 뺀다. 인트로·오프닝 음악을 넣지 않으려고)
 
+  - 편집본이 30분이 안 되면 원본 녹음 + 발화 구간(speech.json 에서 전사 낱말이 있는 것만, 앞뒤 0.15초)을 keep 으로 준다.
+    재발화도 같은 목소리·같은 마이크라 학습에 써도 된다
+
 검사
+  - 표본율: 32kHz 아래 소재는 뺀다. 전사용으로 줄인 16kHz wav 는 8kHz 위가 비어서 원본으로 만든 묶음과
+    음색이 10.5dB 달랐다(2026-09-24). 목소리 학습은 원본 소재(48kHz)에서 뽑는다
   - 배경음: 쉼(-55dB 아래) 비율이 너무 낮으면 음악이 깔린 것으로 보고 뺀다
   - 크기: -20 LUFS 로 맞춘다(강의마다 크기가 달라도 한 목소리로 배우게)
+  - 여러 강의를 섞을 때는 음색을 먼저 잰다. 복제는 마이크 색깔과 후처리까지 따라 하므로 성질이 다른 녹음을 섞으면
+    그 평균 소리가 난다
 
 만든 뒤 업로드와 본인 확인(화면에 나온 문장을 직접 읽기)은 목소리 주인이 ElevenLabs 에서 직접 한다.
 
@@ -47,6 +54,15 @@ def pcm(media, keep=None, start_from=0.0):
             continue
         parts.append(x[int(a * SR):int(b * SR)])
     return np.concatenate(parts) if parts else np.zeros(0, np.float32)
+
+
+def sample_rate(media):
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+                        "-of", "csv=p=0", str(media)], capture_output=True, text=True)
+    try:
+        return int(r.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return 0
 
 
 def quiet_ratio(x, thr=-55.0):
@@ -98,6 +114,11 @@ def main(argv):
     part, lufs = float(opt.get("--part", 900)), float(opt.get("--lufs", -20))
     rows, total = [], 0.0
     for it in items:
+        sr = sample_rate(it["media"])
+        if 0 < sr < 32000:
+            rows.append(f"| {it['name']} | - | 표본율 {sr}Hz | **뺌: 전사용으로 줄인 소리로 보임. 원본 소재를 주세요** |")
+            print(rows[-1], flush=True)
+            continue
         keep = json.loads(Path(it["keep"]).read_text(encoding="utf-8"))["keep_ranges"] if it.get("keep") else None
         x = pcm(it["media"], keep, float(it.get("from", 0)))
         qr = quiet_ratio(x)
