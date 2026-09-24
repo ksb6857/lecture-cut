@@ -68,14 +68,31 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 사용자에게 터미널 명령을 복사해 시키지 마라. 전부 이 스킬을 쓰는 쪽이 직접
 실행하고, 사용자에게는 결과만 보고한다.
 
+## 반드시 지킬 편집 규칙
+
+위 안전규칙이 드래프트를 지키는 규칙이면, 이것은 결과물이 틀리지 않게 하는 규칙이다.
+video-use 가 "지킬 것 12가지 말고는 전부 예시 값"으로 나눈 방식을 따랐다.
+
+1. **컷은 파형의 무음에서만 자른다.** 낱말 시각으로 자르지 않는다(위스퍼는 1초까지 어긋난다)
+2. **이음매 앞뒤 35ms 는 조용해야 한다.** 못 옮기는 곳은 1프레임 오디오 페이드
+3. **효과는 원본 시각으로 계획한다.** 컷이 바뀌어도 다시 붙이면 제자리로 간다
+4. **캡컷 값은 사람이 만든 드래프트에서 복제한다.** 도형·애니메이션·전환·페이드 모두
+5. **사용자가 손본 구간과 자막은 그대로 가져온다.** 다시 빌드할 때 떠 두었다가 넣는다
+6. **렌더한 결과를 스스로 검사하고 확인 그림을 다 본 뒤에 보여 준다**
+7. **후보·선택지에는 항목마다 까닭(왜)을 적는다**
+
+그 밖의 숫자(쉼 0.20/0.70초, 박스 여백 16/15px, 확대 최대 2배)는 한 강사의 편집본과 지적에서
+얻은 **예시 값**이다. 그 강사에게는 굳힌 값이고, 다른 강사·다른 영상이면 그 사람 편집본으로 다시 잰다.
+
 ## 파이프라인
 
 체크리스트를 그대로 복사해 진행하면서 채운다.
 
 ```
+[ ] 0 방향 확인   요청을 항목으로 되짚고, 답에 따라 작업이 달라지는 것만 묻는다 → 러프컷보다 큰 요청일 때
 [ ] 0 파트 병합   merge_parts         → 원본이 한 벌이면 건너뛴다
 [ ] 1 발화 검출   analyze_audio       → <이름>_speech.json
-[ ] 2 전사        transcribe          → <이름>_words.json
+[ ] 2 전사        transcribe (위스퍼) 또는 transcribe_scribe (ElevenLabs, 유료) → <이름>_words.json
 [ ] 3 재발화      transcribe_per_segment + find_hidden/repeat_retakes
 [ ]   슬레이트    find_slates         → 파트별 촬영일 때만
 [ ] 3.5 교차검증  crosscheck_ctc + compare_transcripts + fill_missing_words
@@ -83,8 +100,12 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 [ ] 5 병합        merge_analysis      → <이름>_analysis.json, _retakes.json
 [ ] 6 무음 분할   refine_speech       → <이름>_speech_refined.json
 [ ]   컷 계획     cut_planner         → <이름>_keep_ranges.json ("문장 중간 N곳" 을 읽는다)
+[ ]   가장자리    snap_edges · quiet_edges → 이음매 앞뒤 35ms 가 -62dB 아래로
 [ ] 6.5 검산      final_check + 들리는 대본 읽기 → 기준을 넘으면 멈춘다
+[ ] 6.6 길이      length_budget       → 목표보다 길 때만. 후보표(무엇·왜·빼면)를 사용자가 고른다
 [ ] 7 드래프트    build_capcut_draft  → 캡컷 드래프트 + SRT (소리 검증 자동)
+[ ]   이음매 페이드 apply_audio_fades  → 조용하지 않은 이음매에만 1프레임
+[ ] 7.6 자가 검사  render_preview + self_check → 확인 그림을 다 보고 나서 보여 준다(3번까지)
 [ ] 8 검증        verify_cuts         → 말 잘림 0건 확인
 [ ] 9 보고서      make_report         → <이름>_보고서.md
 [ ] 10 규격 점검  check_guidelines    → 프로필이 있을 때만
@@ -93,6 +114,12 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 
 `<이름>` 은 강의 하나를 가리키는 짧은 영문 이름을 쓴다(`ep03` 처럼). 한글
 파일명은 torch 가 모델을 못 읽는 문제를 부르니 피한다.
+
+## 방향 확인 (러프컷보다 큰 요청일 때)
+
+효과·길이·여러 강의가 한꺼번에 섞인 요청이면 바로 작업하지 않는다. 이해한 것을 항목으로 되짚고,
+**답에 따라 작업이 달라지는 것만** 선택지로 묻는다(권장안 표시). 원본 보존 같은 원래 규칙은 묻지 않고
+가정으로 적는다. 내용을 빼는 결정(길이 줄이기)은 후보만 보여 주고 사용자가 고른다.
 
 ## 0. 파트를 나눠 찍었으면 먼저 잇는다
 
@@ -141,6 +168,16 @@ python <SKILL>/src/transcribe.py <작업>/work/<이름>.wav <작업>/work/<이�
 **용어집은 강의마다 새로 쓴다.** 마지막 인자가 그 파일이다. 다른 강의 용어집을
 그대로 두면 위스퍼가 짧은 무음 구간에서 그 문장을 통째로 뱉는다. 강의에 맞는
 용어집을 주면 전문용어 오전사가 크게 준다(실측 9종 중 7종).
+
+**ElevenLabs Scribe 로도 전사할 수 있다(유료, 시간당 0.22달러).** 말 그대로 적어서(추임새·되풀이 보존)
+재발화가 전사에 남고, 용어집을 keyterms 로 넘긴다. 결과 형식은 같다.
+
+```bash
+python <SKILL>/src/transcribe_scribe.py <작업>/work/<이름>.wav <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json --glossary <작업>/glossary/<이름>.txt
+```
+
+**어느 쪽을 쓸지는 비교 수치로 정한다.** 한 강의로 두 전사를 돌려 `stt_benchmark.py` 로 말 빠짐·
+무음 속 낱말·시각 오차·재발화 보존·용어 표기를 잰다. 컷은 어느 쪽이든 파형으로 자른다.
 
 마지막에서 두 번째 인자가 `cuda` 면 GPU, `cpu` 면 CPU 다. 90분 강의가 GPU 5~10분,
 CPU 1~2시간 걸린다. 오래 걸리니 백그라운드로 돌린다.
@@ -219,6 +256,10 @@ python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech_refined.json <�
 `cut_planner` 는 종결어미로 문장 끝을 가려 쉼을 달리 남긴다. **컷이 20곳 넘는데 문장 중간이
 0곳이면 멈춘다.** 계획기가 찍는 "문장 중간 N곳 · 끝 M곳"을 읽는다.
 
+계획이 나오면 블록 가장자리를 정리한다(`refine_speech.snap_edges`, `quiet_edges`). 가장자리 앞뒤 35ms 가
+-62dB 보다 시끄러우면 이어 붙인 곳이 작게 튄다. 말 밖에서, 잘라 낸 소리를 들이지 않는 범위에서 조용한 곳으로
+옮긴다(한 강의에서 시끄러운 가장자리가 72곳에서 31곳으로 줄었다). 못 옮긴 곳은 7.5단계 페이드가 맡는다.
+
 쉼을 얼마나 남길지는 `src/cut_planner.py` 의 `PARAMS` 가 정본이다. 기본값과
 그 근거는 [docs/컷-파라미터.md](docs/컷-파라미터.md). **문서에 적힌 숫자를
 믿지 말고 코드를 읽어라.**
@@ -240,6 +281,17 @@ python <SKILL>/src/final_check.py <작업>/work/<이름>_keep_ranges.json <작�
 잘랐을 때 실제로 들리는 말을 덩어리 단위로 뽑아 읽으면 검산기가 못 잡는 헛시작과 되풀이가
 보인다(2026-09-23 에 25곳). 자세한 것은 [docs/컷-마무리.md](docs/컷-마무리.md).
 
+### 6.6. 길이 예산 (규격보다 길 때)
+
+```bash
+python <SKILL>/src/length_budget.py 구간 <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_words.json --out <작업>/work/<이름>_구간표.md
+python <SKILL>/src/length_budget.py 예산 <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_길이후보.json --out <작업>/work/<이름>_길이후보.md
+```
+
+구간표를 보고 뺄 후보를 역할(되풀이, 곁가지, 꼬인 문장, 예시 세부, 말 없는 장, 설명)로 고른다.
+**후보마다 무엇·왜·빼면을 적는다.** 누적 길이 표를 사용자에게 보여 주고 고른 번호만
+`--pick 1,2 --deletions <지시.json>` 으로 원본 시각 삭제 지시로 바꿔 6단계를 다시 돈다.
+
 ### 7. 드래프트 생성
 
 ```bash
@@ -255,6 +307,26 @@ SRT 파일은 그대로 만들되 드래프트에는 자막을 깔지 않는다.
 거기서 빌드가 멈춘다. `draft_content.json` 만 읽으면 무음 드래프트도 멀쩡해
 보이므로(volume 1.0, has_audio True) 이 검사 없이는 캡컷에서 열어보기 전까지
 아무도 모른다.
+
+### 7.5. 이음매 페이드
+
+두 테이크를 문장 한가운데서 이은 곳처럼 가장자리를 조용한 곳으로 못 옮긴 이음매는 작게 '틱' 한다.
+그런 이음매 양쪽 클립에만 1프레임(33ms) 오디오 페이드를 넣는다. 페이드 모양은 사람이 넣은 드래프트에서 복제한다.
+
+```bash
+python <SKILL>/src/apply_audio_fades.py <드래프트이름> <페이드가 든 참조 드래프트> --wav <작업>/work/<이름>.wav --levels <작업>/work/<이름>_levels.npy [--offset 초]
+```
+
+### 7.6. 렌더 자가 검사 — 보여 주기 전에
+
+```bash
+python <SKILL>/src/render_preview.py "<소재.mp4>" <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_미리보기.mp4 --boxes <박스.json> --transitions <전환.json> --levels <세기.npy>
+python <SKILL>/src/self_check.py <작업>/work/<이름>_미리보기.mp4 <작업>/work/<이름>_keep_ranges.json --out <작업>/work/self_check --boxes <박스.json> --zooms <확대.json> --builds <빌드.json> --transitions <전환.json>
+```
+
+영상·소리 길이, 컷마다 소리 튐을 숫자로 재고, 박스·확대·교안 단계·전환 경계의 프레임을 확인 그림으로 모은다.
+**확인 그림을 전부 본다.** 틀린 곳은 고쳐 다시 렌더하고 다시 검사한다. **3번까지만** 하고, 남으면 무엇이 남았는지
+사용자에게 알린다. 판단이 필요한 한 곳은 `timeline_view.py` 로 프레임·세기·낱말·남는 곳을 한 장에 그려 본다.
 
 ### 8~9. 검증과 보고서
 
@@ -341,6 +413,8 @@ python <SKILL>/src/learn_from_edit.py <사람이_손본_드래프트> <자동편
 | 재녹음 오디오와 원본 소리가 겹쳐 들린다 | `mute_under_audio.py` |
 | 삭제 지시가 서로 겹친다 | `resolve_delete_conflicts.py` |
 | 되돌리고 싶다 | `draft_snapshot.py 목록` 후 `복원` |
+| 한 구간이 어떻게 잘렸는지 보고 싶다 | `timeline_view.py <영상> <시작> <끝> --words --keep --boxes` |
+| 목소리 복제 학습용 음성을 모으고 싶다 | `voice_dataset.py` (편집 끝난 강의에서 한 사람 목소리만) |
 
 ## 더 읽을 것
 
