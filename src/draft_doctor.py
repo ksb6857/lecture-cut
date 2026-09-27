@@ -76,17 +76,24 @@ def resolve(name):
 
 BACKUP = DRAFTS.parent / "_lecture_autocut_doctor_backup"
 SKIP = ("_doctor_backup", "_lecture_autocut_backup")
+SUBDRAFT = "subdraft"
 
 
-def contents(root: Path):
+def contents(root: Path, sub=False):
     """캡컷이 실제로 읽는 것부터 순서대로. 하위 사본이 최신이다.
 
     백업 사본은 반드시 걸러낸다. 백업을 드래프트 폴더 안에 두었다가 그게
     '가장 깊은 사본' 으로 잡혀 수리 결과를 잘못 읽은 적이 있다(2026-08-17).
     그래서 백업은 아예 드래프트 폴더 **바깥**에 만든다.
+
+    `subdraft/<id>/draft_content.json` 은 사본이 아니라 하위 프로젝트(따로 묶은 클립)의
+    타임라인이다. 기본으로 뺀다. 넣으면 도구가 하위 프로젝트를 본 타임라인으로 읽거나
+    본 타임라인 내용으로 덮어쓴다(2026-09-26 선생님 드래프트에 처음 생김).
+    소재 경로를 고칠 때(수리·옮기기)만 sub=True 로 하위 프로젝트까지 본다.
     """
     cs = [q for q in root.rglob("draft_content.json")
-          if not any(s in q.parts for s in SKIP)]
+          if not any(s in q.parts for s in SKIP)
+          and (sub or SUBDRAFT not in q.parts)]
     return sorted(cs, key=lambda q: (len(q.relative_to(root).parts),
                                      q.stat().st_mtime), reverse=True)
 
@@ -121,7 +128,7 @@ def repair(root: Path, dry=False):
     pat = re.compile(r"(com\.lveditor\.draft/)([^/]+)(/materials/)", re.I)
     real = root.name
     total = fixed = still = 0
-    for p in contents(root):
+    for p in contents(root, sub=True):
         d = json.loads(p.read_text(encoding="utf-8"))
         changed = 0
         for kind in MEDIA:
@@ -189,6 +196,25 @@ def repair(root: Path, dry=False):
     return total, fixed, still
 
 
+def main_track_order(path: Path):
+    """주 트랙(첫 영상 트랙) 목록이 시작 시각순이 아니거나 겹친 곳 수.
+
+    캡컷은 주 트랙 클립을 시각이 아니라 목록 순서대로 이어 붙인다. 목록 끝에 붙인 클립은
+    시작 시각이 앞이어도 영상 끝으로 가고 뒤 클립이 당겨져 소리와 어긋난다(2026-09-26).
+    """
+    d = json.loads(path.read_text(encoding="utf-8"))
+    vt = [t for t in d.get("tracks", []) if t.get("type") == "video"]
+    if not vt:
+        return 0
+    bad, prev = 0, None
+    for sg in vt[0].get("segments", []):
+        a = sg["target_timerange"]["start"]
+        if prev is not None and a < prev - 2000:
+            bad += 1
+        prev = a + sg["target_timerange"]["duration"]
+    return bad
+
+
 def diagnose(one=None):
     targets = [resolve(one)] if one else sorted(folders())
     print(f"{'폴더':30s} {'프로젝트명':22s} {'사본':>3s} {'정상':>5s} "
@@ -199,10 +225,17 @@ def diagnose(one=None):
             print(f"{f.name:30s} {'-':22s}   0  (draft_content.json 없음)")
             continue
         ok, broken, ph, samples = scan(cs[0])
+        for q in contents(f, sub=True):            # 하위 프로젝트 안 소재도 끊겼는지 본다
+            if SUBDRAFT in q.parts:
+                o2, b2, p2, s2 = scan(q)
+                ok, broken, ph, samples = ok + o2, broken + b2, ph + p2, samples + s2
         mark = "  <-- 끊어짐" if broken else ""
+        order = main_track_order(cs[0])
+        if order:
+            mark += f"  <-- 주 트랙 순서 어긋남 {order}곳"
         print(f"{f.name:30s} {str(meta_name(f)):22s} {len(cs):3d} "
               f"{ok:5d} {broken:5d} {ph:11d}{mark}")
-        for s in samples:
+        for s in samples[:2]:
             print(f"      끊긴 예: {s}")
 
 

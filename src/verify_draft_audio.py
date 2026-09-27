@@ -232,6 +232,40 @@ def check(d: dict, root: Path | None = None) -> tuple:
         warns.append(f"어느 material 도 가리키지 않는 참조 {dangling}건 "
                      f"(pycapcut import_srt 가 만든다. 캡컷은 무시한다)")
 
+    # 4) 소리가 두 번 나가는가: 보정한 목소리를 전체 길이로 깔고 영상 클립 소리를 안 껐다.
+    #    같은 녹음이라 1~2ms 차이로 겹쳐 메아리로 들리지 않는다. 소리가 1dB 남짓 커지고
+    #    음색만 조금 바뀌어 귀로는 못 찾고 검수에서도 안 걸렸다(2026-09 한 강의, 제출본을 재서 찾음).
+    #    배경음악만 전체에 깐 드래프트면 영상 클립이 목소리라 소리가 나야 맞다. 그래서 막지 않고 알린다.
+    spans = sorted((s["target_timerange"]["start"],
+                    s["target_timerange"]["start"] + s["target_timerange"]["duration"])
+                   for tr in d.get("tracks", [])
+                   if tr.get("type") == "audio" and not (tr.get("attribute") or 0) & 1
+                   for s in tr.get("segments", []) if (s.get("volume") or 0) > 0)
+    merged = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    if total and sum(b - a for a, b in merged) >= 0.9 * total:
+        loud = []
+        for tr in d.get("tracks", []):
+            if tr.get("type") != "video" or (tr.get("attribute") or 0) & 1:
+                continue
+            for s in tr.get("segments", []):
+                if not (s.get("volume") or 0) > 0 or s.get("material_id") in photos:
+                    continue
+                a = s["target_timerange"]["start"]
+                b = a + s["target_timerange"]["duration"]
+                cov = sum(max(0, min(b, y) - max(a, x)) for x, y in merged)
+                if cov >= 0.5 * max(b - a, 1):
+                    loud.append(a / 1e6)
+        if loud:
+            where = ", ".join(f"{int(t // 60):02d}:{t % 60:04.1f}" for t in sorted(loud)[:4])
+            warns.append(f"전체 길이 오디오가 깔려 있는데 그 밑의 영상 클립 {len(loud)}개가 소리를 낸다"
+                         f"(첫 곳 {where}). 보정한 목소리를 따로 깐 것이면 같은 말이 두 번 나간다."
+                         f" 그 클립들 음량을 0 으로. 배경음악만 깐 것이면 무시")
+
     return fails, warns
 
 

@@ -41,6 +41,9 @@ python <SKILL>/src/check_gpu.py                    # GPU 는 없어도 된다(�
 없는 것이 있으면 `pip install -r <SKILL>/requirements.txt` 로 채운다.
 ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
 
+윈도우 Git Bash 에서 돌릴 때는 파이썬에 넘기는 경로를 `C:/...` 로 쓴다. `/c/...` 는 파이썬이 부른 ffmpeg 가
+못 열어서, 에러 없이 빈 결과(프레임 없음, 「파일이 없다」)가 나온다.
+
 캡컷 드래프트 폴더는 자동으로 찾는다. 다른 드라이브에 설치했으면 환경변수
 `CAPCUT_DRAFT_ROOT` 에 경로를 지정한다.
 
@@ -64,6 +67,11 @@ ffmpeg 이 없으면 윈도우는 `winget install --id Gyan.FFmpeg -e`.
    다운로드 폴더나 클라우드 동기화 폴더에 두면 나중에 통째로 끊긴다.
 7. **한 강의에 작업 드래프트는 하나만 둔다.** 판(버전)은 캡컷 목록이 아니라
    `draft_snapshot.py` 로 목록 밖에 남긴다.
+8. **주 트랙(첫 영상 트랙)에 클립을 끼우면 목록을 시작 시각순으로 정렬한다.** 캡컷은 주 트랙 클립을
+   시각이 아니라 목록 순서대로 이어 붙인다. 목록 끝에 붙이면 영상 끝으로 가고 뒤 클립이 당겨져 소리와 어긋난다.
+   `draft_doctor.py 진단` 이 「주 트랙 순서 어긋남」을 알린다
+9. **`subdraft/<id>/draft_content.json` 은 사본이 아니다.** 캡컷에서 클립을 하위 프로젝트로 묶으면 생긴다.
+   `draft_doctor.contents` 는 기본으로 뺀다. 드래프트를 직접 고치는 스크립트도 뿌리와 `Timelines/` 사본만 쓴다
 
 사용자에게 터미널 명령을 복사해 시키지 마라. 전부 이 스킬을 쓰는 쪽이 직접
 실행하고, 사용자에게는 결과만 보고한다.
@@ -286,6 +294,10 @@ python <SKILL>/src/merge_analysis.py <작업>/work/<이름>_results <작업>/wor
 python <SKILL>/src/refine_speech.py <작업>/work/<이름>_speech.json <작업>/work/<이름>_words.json <작업>/work/<이름>.wav <작업>/work/<이름>_speech_refined.json <작업>/work/<이름>_retakes.json <작업>/work/<이름>_hallucination.json --levels <작업>/work/<이름>_levels.npy --report <작업>/work/<이름>_못나눈경계.json --snapped <작업>/work/<이름>_retakes_snapped.json
 python <SKILL>/src/cut_planner.py <작업>/work/<이름>_speech_refined.json <작업>/work/<이름>_words.json <작업>/work/<이름>_keep_ranges.json <작업>/work/<이름>_retakes_snapped.json
 ```
+
+`refine_speech` 는 청크 분석이 낱말 번호(`from_i`)로 낸 삭제를 낱말 시각으로 바꿔 함께 다룬다. 지어낸 말
+(`kind: hallucination`)과 자막만 고치는 지시는 소리를 자르지 않고 `--snapped` 파일로 그대로 넘긴다.
+그래서 `cut_planner` 는 이 파일 하나만 받으면 된다(2026-09-27 전에는 번호 삭제가 여기서 빠졌다).
 
 **삭제 지시가 발화 덩어리 한가운데 걸리면 `refine_speech` 가 진짜 무음(-50dB 40ms 이상)에서만
 덩어리를 나눈다.** 무음이 없으면 나누지 않고 목록에 남긴다. 낱말 시각(±0.3~1초 어긋남)으로

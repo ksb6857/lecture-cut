@@ -41,16 +41,37 @@ DIP_DB = -45.0    # 2단계: 완전한 무음이 없을 때 받아 주는 깊은
 DIP_LEN = 0.02
 
 
-def load_deletions(paths):
-    out = []
+def load_deletions(paths, words=None):
+    """삭제 지시 -> [(시작, 끝, 지시)] 와 소리와 무관해 그대로 넘길 지시.
+
+    낱말 번호(from_i·to_i)로 적힌 지시(청크 분석이 낸 것)는 그 낱말들의 시각으로 바꾼다.
+    예전에는 시각(from_t)으로 적힌 것만 읽어서, SKILL.md 대로 돌리면 청크 판단 삭제가
+    무음 나누기와 컷 계획에서 통째로 빠졌다(2026-09-26 확인, 한 강의 117건).
+    자막만 고치는 지시(caption_only)와 지어낸 말(kind=hallucination)은 소리를 자르지 않고
+    그대로 넘긴다. cut_planner 와 드래프트 빌더가 자막에서만 뺀다.
+    """
+    by_i = {w["i"]: w for w in (words or []) if "i" in w}
+    out, passthru = [], []
     for p in paths:
         r = json.loads(Path(p).read_text(encoding="utf-8"))
         for d in r.get("deletions", []):
             if d.get("caption_only"):
-                continue                     # 자막만 고치는 지시는 소리와 무관
+                passthru.append(d)               # 자막만 고치는 지시는 소리와 무관
+                continue
             if "from_t" in d:
                 out.append((float(d["from_t"]), float(d["to_t"]), d))
-    return out
+                continue
+            if "from_i" not in d:
+                continue
+            if d.get("kind") == "hallucination":
+                passthru.append(d)               # 소리가 없는 말. 자막에서만 뺀다
+                continue
+            ws = [by_i[i] for i in range(int(d["from_i"]), int(d["to_i"]) + 1) if i in by_i]
+            if not ws:
+                passthru.append(d)
+                continue
+            out.append((min(float(w["start"]) for w in ws), max(float(w["end"]) for w in ws), d))
+    return out, passthru
 
 
 def mid(w):
@@ -259,16 +280,20 @@ def main(argv):
             pos.append(argv[k])
             k += 1
     speech_p, words_p, wav_p, out_p = pos[:4]
-    dels = load_deletions(pos[4:])
     speech = json.loads(Path(speech_p).read_text(encoding="utf-8"))
     words = json.loads(Path(words_p).read_text(encoding="utf-8"))["words"]
+    dels, passthru = load_deletions(pos[4:], words)
+    n_i = sum(1 for _, _, d in dels if "from_t" not in d)
+    if n_i:
+        print(f"낱말 번호로 적힌 삭제 {n_i}건을 낱말 시각으로 바꿔 넣었다")
     db = L.compute(wav_p, opts.get("--levels"))
     res, unresolved, snapped = refine(speech, words, db, dels)
     Path(out_p).write_text(json.dumps(res, ensure_ascii=False, indent=1),
                            encoding="utf-8")
     if opts.get("--snapped"):
+        # 자막에서만 뺄 지시(passthru)도 같이 넘긴다. cut_planner 는 이 파일 하나만 받는다
         Path(opts["--snapped"]).write_text(json.dumps(
-            {"deletions": [{**d, "from_t": a, "to_t": b} for a, b, d in snapped]},
+            {"deletions": [{**d, "from_t": a, "to_t": b} for a, b, d in snapped] + passthru},
             ensure_ascii=False, indent=1), encoding="utf-8")
     if opts.get("--report"):
         Path(opts["--report"]).write_text(

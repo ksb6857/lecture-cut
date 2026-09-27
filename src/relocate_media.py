@@ -57,7 +57,7 @@ def run(drafts, dest=DEST, dry=False):
     files = {}
     for name in drafts:
         root = resolve(name)
-        files[name] = contents(root)
+        files[name] = contents(root, sub=True)   # 하위 프로젝트 안 소재 경로도 옮긴다
         for f in files[name]:
             d = json.loads(f.read_text(encoding="utf-8"))
             for m, p in media_paths(d):
