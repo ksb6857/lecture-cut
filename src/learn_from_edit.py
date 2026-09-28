@@ -31,8 +31,11 @@ def draft_content_path(name) -> Path:
     내용이 하나도 안 보이는 채로 '학습' 이 돌아간다 — 조용히 틀린다.
     그래서 가장 최근에 저장된 것을 고른다.
     """
+    if Path(name).is_file():                 # 본 파일(템플릿)을 바로 줄 수도 있다
+        return Path(name)
     root = Path(name) if Path(name).is_dir() else DRAFTS / name
-    cands = list(root.rglob("draft_content.json"))
+    # subdraft(하위 프로젝트)는 다른 타임라인이다. 최근 저장본이어도 본 타임라인이 아니다
+    cands = [q for q in root.rglob("draft_content.json") if "subdraft" not in q.parts]
     if not cands:
         raise SystemExit(f"draft_content.json 이 없습니다: {root}")
     # 수정 시각으로 고르면 안 된다. 수리 도구들이 사본을 전부 건드리면
