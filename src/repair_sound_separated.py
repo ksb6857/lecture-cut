@@ -37,9 +37,11 @@ from draft_root import DRAFTS  # noqa: E402
 
 def capcut_running() -> bool:
     try:
+        # 바이트로 받는다. text=True 면 python -X utf8 에서 tasklist 의 CP949 출력을
+        # 못 읽어 예외가 나고, 아래 except 가 "꺼져 있음"으로 넘겨 검사가 통째로 빠졌다(2026-10-06)
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq CapCut.exe"],
-                             capture_output=True, text=True, timeout=15)
-        return "CapCut.exe" in out.stdout
+                             capture_output=True, timeout=15)
+        return b"CapCut.exe" in (out.stdout or b"")
     except Exception:
         return False
 

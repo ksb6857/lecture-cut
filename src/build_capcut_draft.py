@@ -30,9 +30,11 @@ def capcut_running() -> bool:
     깨졌다. 캡컷은 열려 있는 프로젝트 폴더가 밖에서 바뀌면 사본을 만들거나
     메모리 상태로 되돌려 저장해 버린다."""
     try:
+        # 바이트로 받는다. text=True 면 python -X utf8 에서 tasklist 의 CP949 출력을
+        # 못 읽어 예외가 나고, 아래 except 가 "꺼져 있음"으로 넘겨 검사가 통째로 빠졌다(2026-10-06)
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq CapCut.exe"],
-                             capture_output=True, text=True, timeout=15)
-        return "CapCut.exe" in out.stdout
+                             capture_output=True, timeout=15)
+        return b"CapCut.exe" in (out.stdout or b"")
     except Exception:
         return False
 

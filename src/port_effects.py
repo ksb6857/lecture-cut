@@ -42,9 +42,11 @@ def capcut_running() -> bool:
     이 파일이 pycapcut 없이도 돌아야 하기 때문이다(그쪽은 모듈 최상단에서
     pycapcut 을 import 한다)."""
     try:
+        # 바이트로 받는다. text=True 면 python -X utf8 에서 tasklist 의 CP949 출력을
+        # 못 읽어 예외가 나고, 아래 except 가 "꺼져 있음"으로 넘겨 검사가 통째로 빠졌다(2026-10-06)
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq CapCut.exe"],
-                             capture_output=True, text=True, timeout=15)
-        return "CapCut.exe" in out.stdout
+                             capture_output=True, timeout=15)
+        return b"CapCut.exe" in (out.stdout or b"")
     except Exception:
         return False
 
