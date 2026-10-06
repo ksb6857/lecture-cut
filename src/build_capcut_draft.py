@@ -111,6 +111,11 @@ def make_snapper(speech_segments, tol=0.6):
     return (lambda t: nearest(starts, t)), (lambda t: nearest(ends, t))
 
 
+def strip_end_punct(text):
+    """자막 줄 끝의 쉼표·마침표(…·。 포함)를 뗀다. 물음표·느낌표는 남긴다"""
+    return text.rstrip().rstrip(",.。、…").rstrip()
+
+
 def build_subtitles(words_data, corrections, deleted, mapper, srt_path,
                     speech_segments=None):
     """Vrew 클립 단위로 자막 라인 구성 -> 편집 타임라인 기준 SRT"""
@@ -186,6 +191,10 @@ def build_subtitles(words_data, corrections, deleted, mapper, srt_path,
                 clean[-1] = (ps, max(pe, e), pt + " " + t)
             continue
         clean.append((s, e, t))
+
+    # 줄 끝 쉼표·마침표는 뺀다(2026-10-06 사용자: 「입력하고,」 처럼 끝에 쉼표가 붙으면 AI 티가 난다,
+    # 마침표도 웬만하면 넣지 않는다). 물음표·느낌표는 둔다. 자막 규칙은 SKILL.md 「자막 규칙」
+    clean = [(s, e, strip_end_punct(t)) for s, e, t in clean]
 
     with open(srt_path, "w", encoding="utf-8-sig") as f:
         for n, (s, e, t) in enumerate(clean, 1):
